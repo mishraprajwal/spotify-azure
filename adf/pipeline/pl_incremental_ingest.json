@@ -1,0 +1,137 @@
+{
+  "name": "pl_incremental_ingest",
+  "properties": {
+    "description": "Watermark-based incremental copy from Azure SQL to the ADLS bronze container.",
+    "parameters": {
+      "tables": {
+        "type": "array",
+        "defaultValue": [
+          { "schema": "dbo", "table": "dim_artist", "cursor_column": "updated_at" },
+          { "schema": "dbo", "table": "dim_track", "cursor_column": "updated_at" },
+          { "schema": "dbo", "table": "dim_user", "cursor_column": "updated_at" },
+          { "schema": "dbo", "table": "dim_date", "cursor_column": "date_value" },
+          { "schema": "dbo", "table": "fact_stream", "cursor_column": "stream_timestamp" }
+        ]
+      }
+    },
+    "activities": [
+      {
+        "name": "for_each_table",
+        "type": "ForEach",
+        "typeProperties": {
+          "items": { "value": "@pipeline().parameters.tables", "type": "Expression" },
+          "isSequential": false,
+          "batchCount": 5,
+          "activities": [
+            {
+              "name": "read_watermark",
+              "type": "Lookup",
+              "policy": { "timeout": "0.00:10:00", "retry": 1 },
+              "typeProperties": {
+                "source": {
+                  "type": "JsonSource",
+                  "storeSettings": { "type": "AzureBlobFSReadSettings", "recursive": false }
+                },
+                "dataset": {
+                  "referenceName": "ds_watermark_json",
+                  "type": "DatasetReference",
+                  "parameters": { "table_name": "@item().table" }
+                },
+                "firstRowOnly": true
+              }
+            },
+            {
+              "name": "read_new_watermark",
+              "type": "Lookup",
+              "dependsOn": [{ "activity": "read_watermark", "dependencyConditions": ["Succeeded"] }],
+              "policy": { "timeout": "0.00:10:00", "retry": 1 },
+              "typeProperties": {
+                "source": {
+                  "type": "AzureSqlSource",
+                  "sqlReaderQuery": {
+                    "value": "@concat('SELECT CONVERT(varchar(23), ISNULL(MAX(', item().cursor_column, '), ''', activity('read_watermark').output.firstRow.watermark, '''), 121) AS new_watermark FROM ', item().schema, '.', item().table)",
+                    "type": "Expression"
+                  }
+                },
+                "dataset": {
+                  "referenceName": "ds_sql_table",
+                  "type": "DatasetReference",
+                  "parameters": { "schema_name": "@item().schema", "table_name": "@item().table" }
+                },
+                "firstRowOnly": true
+              }
+            },
+            {
+              "name": "copy_increment_to_bronze",
+              "type": "Copy",
+              "dependsOn": [{ "activity": "read_new_watermark", "dependencyConditions": ["Succeeded"] }],
+              "policy": { "timeout": "0.02:00:00", "retry": 1 },
+              "typeProperties": {
+                "source": {
+                  "type": "AzureSqlSource",
+                  "sqlReaderQuery": {
+                    "value": "@concat('SELECT * FROM ', item().schema, '.', item().table, ' WHERE ', item().cursor_column, ' > ''', activity('read_watermark').output.firstRow.watermark, ''' AND ', item().cursor_column, ' <= ''', activity('read_new_watermark').output.firstRow.new_watermark, '''')",
+                    "type": "Expression"
+                  }
+                },
+                "sink": {
+                  "type": "ParquetSink",
+                  "storeSettings": { "type": "AzureBlobFSWriteSettings" },
+                  "formatSettings": { "type": "ParquetWriteSettings" }
+                }
+              },
+              "inputs": [
+                {
+                  "referenceName": "ds_sql_table",
+                  "type": "DatasetReference",
+                  "parameters": { "schema_name": "@item().schema", "table_name": "@item().table" }
+                }
+              ],
+              "outputs": [
+                {
+                  "referenceName": "ds_bronze_parquet",
+                  "type": "DatasetReference",
+                  "parameters": { "table_name": "@item().table" }
+                }
+              ]
+            },
+            {
+              "name": "save_new_watermark",
+              "type": "Copy",
+              "dependsOn": [{ "activity": "copy_increment_to_bronze", "dependencyConditions": ["Succeeded"] }],
+              "policy": { "timeout": "0.00:10:00", "retry": 1 },
+              "typeProperties": {
+                "source": {
+                  "type": "AzureSqlSource",
+                  "sqlReaderQuery": {
+                    "value": "@concat('SELECT ''', activity('read_new_watermark').output.firstRow.new_watermark, ''' AS watermark')",
+                    "type": "Expression"
+                  }
+                },
+                "sink": {
+                  "type": "JsonSink",
+                  "storeSettings": { "type": "AzureBlobFSWriteSettings" },
+                  "formatSettings": { "type": "JsonWriteSettings" }
+                }
+              },
+              "inputs": [
+                {
+                  "referenceName": "ds_sql_table",
+                  "type": "DatasetReference",
+                  "parameters": { "schema_name": "@item().schema", "table_name": "@item().table" }
+                }
+              ],
+              "outputs": [
+                {
+                  "referenceName": "ds_watermark_json",
+                  "type": "DatasetReference",
+                  "parameters": { "table_name": "@item().table" }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

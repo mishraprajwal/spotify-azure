@@ -1,0 +1,18 @@
+{
+  "name": "ds_watermark_json",
+  "properties": {
+    "type": "Json",
+    "linkedServiceName": { "referenceName": "ls_adls", "type": "LinkedServiceReference" },
+    "parameters": {
+      "table_name": { "type": "string" }
+    },
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileSystem": "bronze",
+        "folderPath": "_watermarks",
+        "fileName": { "value": "@concat(dataset().table_name, '.json')", "type": "Expression" }
+      }
+    }
+  }
+}

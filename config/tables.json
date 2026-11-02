@@ -1,0 +1,27 @@
+[
+  {
+    "schema": "dbo",
+    "table": "dim_artist",
+    "cursor_column": "updated_at"
+  },
+  {
+    "schema": "dbo",
+    "table": "dim_track",
+    "cursor_column": "updated_at"
+  },
+  {
+    "schema": "dbo",
+    "table": "dim_user",
+    "cursor_column": "updated_at"
+  },
+  {
+    "schema": "dbo",
+    "table": "dim_date",
+    "cursor_column": "date_value"
+  },
+  {
+    "schema": "dbo",
+    "table": "fact_stream",
+    "cursor_column": "stream_timestamp"
+  }
+]
